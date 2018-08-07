@@ -1,0 +1,451 @@
+------------------------------------------------------------------------------------------------------------------------------
+					TABLE
+------------------------------------------------------------------------------------------------------------------------------
+
+CREATE TABLE LOGIN
+  (
+    U_ID     	VARCHAR2(20 BYTE) NOT NULL ENABLE,
+    USERNAME 	VARCHAR2(20 BYTE) NOT NULL ENABLE,
+    PASSWORD 	VARCHAR2(20 BYTE),
+    TYPE    	VARCHAR2(20 BYTE),
+
+    CONSTRAINT "LOGIN_PK_UID" PRIMARY KEY ("U_ID") ,
+    CONSTRAINT "LOGIN_UK_USERNAME" UNIQUE ("USERNAME") 
+  );
+
+
+CREATE TABLE USERS
+  (
+    U_ID 		VARCHAR2(20 BYTE) NOT NULL ENABLE,
+    NAME 		VARCHAR2(30 BYTE),
+    PHONE 	VARCHAR2(10),
+    Q_LEFT 	NUMBER,
+    REG_DATE 	DATE,
+    EXP_DATE	DATE,
+    B_ACC_NO 	VARCHAR2(20 BYTE),
+    B_NAME   	VARCHAR2(20 BYTE),
+    ADDRESS  	VARCHAR2(200 BYTE),
+    CONSTRAINT "USERS_UK_UID" UNIQUE ("U_ID") ,
+    CONSTRAINT "USERS_LOGIN_FK_U_ID" FOREIGN KEY ("U_ID") REFERENCES LOGIN(U_ID) 
+  );
+
+
+CREATE TABLE GUIDE
+  (
+    U_ID    	VARCHAR2(20 BYTE) NOT NULL ,
+    NAME   	VARCHAR2(30 BYTE),
+    PHONE   	VARCHAR2(10 BYTE),
+    ADDRESS 	VARCHAR2(200 BYTE),
+    REG_DATE 	DATE,
+    EXP_DATE 	DATE,
+    F_ANS_COUN 	NUMBER,
+    ANS_COUNT   	NUMBER,
+    ANS_DATE 	DATE,
+    BALANCE  	NUMBER,
+    B_NAME  	VARCHAR2(20 BYTE),
+    B_ACC_NO 	VARCHAR2(20 BYTE),
+    CONSTRAINT "GUIDE_UK_UID" UNIQUE ("U_ID") ,
+    CONSTRAINT "GUIDE_LOGIN_FK_UID" FOREIGN KEY ("U_ID") REFERENCES LOGIN ("U_ID")
+  );
+
+
+CREATE TABLE QUESTIONS
+  (
+    Q_ID    	VARCHAR2(20 BYTE) NOT NULL ENABLE,
+    LOC      	VARCHAR2(20 BYTE),
+    U_ID     	VARCHAR2(20 BYTE),
+    QUESTION 	VARCHAR2(200 BYTE),
+    Q_DATE	 DATE,
+    STATUS    	VARCHAR2(20 BYTE),
+    ANS_COUNT 	NUMBER,
+    CONSTRAINT QUESTIONS_PK PRIMARY KEY ("Q_ID") ,
+    CONSTRAINT QUESTIONS_LOGIN_FK_UID FOREIGN KEY ("U_ID") REFERENCES LOGIN ("U_ID") 
+  );
+
+CREATE TABLE ANSWERS
+  (
+    Q_ID   	VARCHAR2(20 BYTE) NOT NULL ENABLE,
+    G_ID   	VARCHAR2(20 BYTE) NOT NULL ENABLE,
+    ANSWER 	VARCHAR2(200 BYTE),
+    ANS_DATE 	TIMESTAMP (6),
+    RATING 	VARCHAR2(20 BYTE),
+    CONSTRAINT "ANSWERS_CHK_RATING" CHECK (RATING IN ('BEST', 'BETTER', 'GOOD', 'OK', 'NOT OK')) ,
+    CONSTRAINT "ANSWERS_PK" PRIMARY KEY ("Q_ID", "G_ID") ,
+    CONSTRAINT "ANSWERS_QUESTIONS_FK_QID" FOREIGN KEY ("Q_ID") REFERENCES QUESTIONS (Q_ID) 
+  );
+
+
+
+------------------------------------------------------------------------------------------------------------------------------
+					PROCEDURES
+------------------------------------------------------------------------------------------------------------------------------
+
+create or replace
+PROCEDURE AUTORATE AS 
+  CURSOR cur IS SELECT Q_ID FROM questions 
+  WHERE UPPER(STATUS) = 'UNRATED'
+    and q_date <> sysdate;
+  V_G_ID    ANSWERS.G_ID%TYPE;
+BEGIN
+  FOR V_REC IN CUR
+  LOOP
+      SELECT G_ID INTO V_G_ID FROM ANSWERS WHERE Q_ID = V_REC.Q_ID
+      and ans_date = (select min(ans_date) from answers where Q_ID = V_REC.Q_ID );
+      dbms_output.put_line('1 '||V_G_ID);
+      UPDATE ANSWERS SET RATING='BEST' WHERE Q_ID = V_REC.Q_ID AND g_ID=v_g_id;
+      dbms_output.put_line('BEST RATING '||SQL%ROWCOUNT );
+      UPDATE GUIDE SET balance=balance+50 WHERE U_ID=v_g_id;
+      dbms_output.put_line('BALANCE SET '||SQL%ROWCOUNT );
+      update QUESTIONS SET STATUS='RATED' WHERE Q_ID=V_REC.Q_ID;
+      dbms_output.put_line('QUESTION STATUS '||SQL%ROWCOUNT );
+      COMMIT;
+  END LOOP;
+
+END AUTORATE;
+/
+
+
+create or replace
+PROCEDURE GET_GUIDE_QUESTIONS 
+(
+  p_loc       IN varchar2  
+, p_from_date IN VARCHAR2  
+, p_to_date   IN VARCHAR2  
+, p_g_id      IN varchar2 
+, p_ans_cur   out sys_refcursor  
+) AS 
+BEGIN
+ open p_ans_cur for  select l.type type,q.q_date q_date,u.name name ,q.question  question ,q.q_id q_id
+							 from users u, questions q,login l
+							 where u.u_id = q.u_id
+            							 and l.u_id=u.u_id
+							 and q.status='UNRATED'
+							 and loc like p_loc 
+							 and q_Date between to_date(p_from_date,'DD/MM/YYYY') and to_date(p_to_date,'DD/MM/YYYY')+1
+							 and q_id not in (select q_id from answers where g_id=p_g_id)
+						 and ans_count = 0 ;
+END GET_GUIDE_QUESTIONS;
+/
+
+create or replace
+PROCEDURE pro_REGISTER 
+(
+  P_USERNAME IN VARCHAR2  
+, P_PASSWORD IN VARCHAR2  
+, P_TYPE IN VARCHAR2  
+, p_NAME IN VARCHAR2 
+, p_phone  in varchar2
+, p_B_NAME IN VARCHAR2  
+, p_B_ACC_NO IN VARCHAR2  
+, p_ADDRESS IN VARCHAR2  
+) AS 
+v_uid   varchar2(20);
+sql_code  varchar2(200);
+v_tab     varchar2(30);
+BEGIN
+  select uid_seq.nextval into v_uid from dual;
+  v_uid := p_type || lpad(v_uid,5,'0');
+  insert into login values(
+    upper(v_uid),
+    upper(p_username),
+    p_password,
+    upper(p_type));
+    
+    if(upper(p_type)= 'GUIDE') then
+      insert into guide values ( upper(v_uid) , p_name ,p_phone ,
+                                            p_address,
+                                            sysdate,
+                                            sysdate+30,
+                                            0,
+                                            0,
+                                            sysdate,
+                                            0,
+                                            p_b_name,
+                                            p_b_acc_no );
+                                    
+    elsif (upper(p_type)= 'FREE') then
+       insert into users values ( upper(v_uid) , p_name ,p_phone ,
+                                            1,
+                                            sysdate,
+                                            sysdate+30,
+                                            null,
+                                            null,
+                                            p_address);
+    else
+             insert into users values ( upper(v_uid) , p_name ,p_phone ,
+                                            100,
+                                            sysdate,
+                                            sysdate+30,
+                                            p_b_acc_no ,
+                                            p_b_name,
+                                            p_address);
+    end if;
+    
+    
+END pro_REGISTER;
+/
+
+create or replace
+PROCEDURE PROD_ACCOUNT 
+(
+  p_U_ID IN VARCHAR2  
+, p_USERNAME OUT VARCHAR2  
+, p_PASSWORD OUT VARCHAR2  
+, p_TYPE OUT VARCHAR2  
+, p_NAME OUT VARCHAR2  
+, p_PHONE OUT VARCHAR2
+, p_REG_DATE OUT VARCHAR2  
+, p_EXP_DATE OUT VARCHAR2  
+, p_B_ACC_NO OUT VARCHAR2  
+, p_B_NAME OUT VARCHAR2  
+, p_ADDRESS OUT VARCHAR2   
+) AS 
+BEGIN
+  select 
+      username,
+      password,
+      type 
+  into  
+        p_username,
+        p_password, 
+        p_type 
+  from login 
+  where u_id= p_u_id;
+  
+  if p_type='GUIDE' then
+      select
+        name,
+        phone,
+        address,
+        reg_date,
+        exp_date,
+        b_name,
+        b_acc_no
+      into
+        p_name,
+        p_phone,
+        p_address,
+        p_reg_date,
+        p_exp_date,
+        p_b_name,
+        p_b_acc_no
+      from guide
+      where u_id= p_u_id ;
+  else
+     select
+        name,
+        phone,
+        address,
+        reg_date,
+        exp_date,
+        b_name,
+        b_acc_no
+      into
+        p_name,
+        p_phone,
+        p_address,
+        p_reg_date,
+        p_exp_date,
+        p_b_name,
+        p_b_acc_no
+      from users
+      where u_id= p_u_id ;
+  end if;
+END PROD_ACCOUNT;
+/
+
+create or replace
+PROCEDURE PROD_MYQUESTIONS
+(
+    p_uid       in      questions.u_id%TYPE,
+    p_q_id      out     questions.q_id%TYPE, 
+    p_loc       out     questions.loc%TYPE, 
+    p_question  out     questions.question%TYPE, 
+    p_q_date    out     varchar2,
+    p_ans_count out     questions.ans_count%TYPE,
+
+    ans_cur     out     sys_refcursor
+)
+AS
+BEGIN
+  --fetching questions by the given user
+  Select 
+      q_id,loc,question,to_char(q_date),ans_count 
+  into 
+      p_q_id,p_loc,p_question,p_q_date,p_ans_count
+  from questions
+  where u_id=p_uid
+  and status='UNRATED';
+  
+  --fetcheing all the answers for this question
+  open ans_cur for
+        select g.name name,a.answer ans ,a.rating rating
+        from guide g,answers a
+        where g.u_id = a.g_id
+        and a.q_id=p_q_id;
+END PROD_MYQUESTIONS;
+/
+
+
+
+------------------------------------------------------------------------------------------------------------------------------
+					FUNCTION
+------------------------------------------------------------------------------------------------------------------------------
+
+create or replace
+FUNCTION fn_login_user
+(
+  P_USERNAME IN login.username%TYPE , 
+  P_PASSWORD IN login.password%TYPE  ,
+  
+  p_u_id    out  login.u_id%type,
+  P_NAME OUT guide.name%TYPE  ,
+  P_TYPE OUT login.type%TYPE ,
+  p_count out number,
+  p_expired out number
+) RETURN number AS 
+v_ans_date  Date;
+v_exp_date  Date;
+BEGIN
+  SELECT 
+      TYPE,U_ID INTO P_TYPE ,p_u_id 
+  FROM LOGIN 
+  WHERE 
+    upper(USERNAME)=upper(p_username) 
+    AND PASSWORD=p_password;
+    
+    -- for fetching the q_count given today
+  if upper(p_type) = 'GUIDE' then 
+    select ans_date into v_ans_date from guide where U_ID=p_u_id ;
+    if (v_ans_date <> sysdate) then
+      update guide set ans_count = 0 where U_ID=p_u_id ; 
+    end if;
+    SELECT NAME,ans_count,exp_date INTO P_NAME,p_count,v_exp_date FROM guide WHERE U_ID=p_u_id ;
+  else
+  
+    ---for fetching the question left for a user
+    SELECT NAME,q_left,exp_date INTO P_NAME,p_count,v_exp_date FROM users WHERE U_ID = p_u_id ;
+  end if;
+  if(to_char(v_exp_date,'DD/MM/YY') = to_char(sysdate,'DD/MM/YY') ) then
+    p_expired := 1;
+  else
+    p_expired := 0;
+  end if;
+  
+  return 1;
+EXCEPTION
+  WHEN others THEN
+      dbms_output.put_line(SQLERRM);
+      RETURN 0;
+END ;
+/
+
+create or replace
+FUNCTION FN_INS_ANS 
+(
+  P_G_ID IN VARCHAR2  
+, P_Q_ID IN VARCHAR2  
+, P_ANS IN VARCHAR2  
+, Q_TYPE IN VARCHAR2  
+) RETURN NUMBER AS 
+V_F_COUNT NUMBER(5);
+BEGIN
+  INSERT INTO ANSWERS VALUES(P_Q_ID,P_G_ID,P_ANS,SYSDATE,NULL);
+  UPDATE GUIDE SET ans_date=sysdate WHERE U_ID=P_G_ID;
+  UPDATE GUIDE SET ANS_COUNT = ANS_COUNT +1 WHERE U_ID=P_G_ID;
+  UPDATE QUESTIONS SET ANS_COUNT= ANS_COUNT +1 WHERE Q_ID=P_Q_ID;
+  IF(Q_TYPE = 'FREE') THEN
+    UPDATE GUIDE SET F_ANS_COUNT=F_ANS_COUNT+1 WHERE U_ID=P_G_ID;
+    SELECT F_ANS_COUNT INTO V_F_COUNT FROM GUIDE WHERE U_ID=P_G_ID;
+    IF(V_F_COUNT=3) THEN
+    UPDATE GUIDE SET BALANCE=BALANCE + 50 WHERE U_ID=P_G_ID;
+    UPDATE GUIDE SET F_ANS_COUNT=0 WHERE U_ID=P_G_ID;
+    END IF;
+  END IF;
+  RETURN 1;
+exception
+    when others then
+      ROLLBACK;
+      return 0;
+END FN_INS_ANS;
+/
+
+create or replace
+function fn_INSERTQUESTION 
+(
+  P_U_ID IN questions.u_id%TYPE
+, P_LOC IN questions.loc%TYPE 
+, P_QUESTION IN questions.question%TYPE
+)return number AS 
+  v_qid   questions.q_id%TYPE;
+  v_rate  varchar2(10):='UNRATED';
+  v_type  varchar2(10);
+BEGIN
+
+  select type into v_type from login where u_id = p_u_id;
+  if(v_type = 'FREE' ) THEN 
+    v_rate:='N/A';
+  end if;
+  
+  select Q_seq.nextval into v_qid from dual;
+  v_qid := p_loc || lpad(v_qid,5,'0');
+  insert into questions values(v_qid,p_loc,p_u_id,p_question,sysdate,v_rate,0);
+  update users set q_left=(q_left-1) where u_id=p_u_id;
+  return 1;
+exception
+    when others then
+      rollback;
+      return 0;
+END ;
+/
+
+create or replace
+FUNCTION FN_RATE_IT 
+(
+  p_best IN VARCHAR2  
+, p_better IN VARCHAR2  
+, p_good IN VARCHAR2  
+, p_ok IN VARCHAR2  
+, p_notok IN VARCHAR2  
+, p_qid IN VARCHAR2  
+) RETURN NUMBER AS 
+BEGIN
+--changing the status of the question to rated
+update questions set status = 'RATED' where q_id = p_qid;
+
+--Transaction from best rating
+update answers set rating='BEST' where g_id = p_best and q_id = p_qid;
+update guide set balance = balance +50 where u_id = p_best;
+
+--rating other answers
+update answers set rating='BETTER' where g_id = p_better and q_id = p_qid;
+update answers set rating='GOOD' where g_id = p_good and q_id = p_qid;
+update answers set rating='OK' where g_id = p_ok and q_id = p_qid;
+update answers set rating='NOT OK' where g_id = p_notok and q_id = p_qid;
+
+return 1;
+exception
+  when others then
+  rollback;
+  RETURN 0;
+END FN_RATE_IT;
+/
+
+------------------------------------------------------------------------------------------------------------------------------
+					SEQUENCE
+------------------------------------------------------------------------------------------------------------------------------
+
+CREATE SEQUENCE Q_SEQ 
+MINVALUE 1 
+MAXVALUE 10000 
+INCREMENT BY 1 
+START WITH 1 
+CYCLE ;
+
+
+CREATE SEQUENCE UID_SEQ 
+MINVALUE 1 
+MAXVALUE 10000 
+INCREMENT BY 1 
+START WITH 1 
+CYCLE ;
